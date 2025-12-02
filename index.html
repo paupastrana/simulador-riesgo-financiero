@@ -313,7 +313,7 @@
                             position: 'top',
                             labels: {
                              
-                                filter: (item, legend) => {
+                                filter: (item, chart) => {
                                     const ds = legend.chart.data.datasets[item.datasetIndex];
                                     return !ds.isPath;
                                 }
