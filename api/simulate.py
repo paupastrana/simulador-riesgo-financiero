@@ -1,21 +1,17 @@
 import json
 import numpy as np
-from scipy.stats import norm
 from http.server import BaseHTTPRequestHandler
 import random
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
-            # Leer y parsear datos
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data)
             
-            # Procesar simulación
-            result = self.simulate_risk(data)
+            result = self.simular_riesgo(data)
             
-            # Enviar respuesta
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -26,8 +22,7 @@ class handler(BaseHTTPRequestHandler):
             self.send_response(500)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            error_response = {"error": str(e), "type": type(e).__name__}
-            self.wfile.write(json.dumps(error_response).encode())
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
     
     def do_OPTIONS(self):
         self.send_response(200)
@@ -35,71 +30,51 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
-
     
-    def montecarlo(self, S0, sigma, T, M, N):
-        """
-        S0: Precio actual
-        sigma: volatilidad
-        T: pasos (días)
-        M: simulaciones
-        N: drift (tasa libre de riesgo)
-        """
-        dt = 1 / T  # Cambio de tiempo por paso
+    def montecarlo(self, precio_inicial, volatilidad, dias, simulaciones, tasa):
+        dt = 1 / dias
         
-        # 1. Crear matriz de números aleatorios
-        Z = np.random.standard_normal((M, T))
+        Z = np.random.standard_normal((simulaciones, dias))
+        rendimientos_diarios = (tasa - 0.5 * volatilidad**2) * dt + volatilidad * np.sqrt(dt) * Z
         
-        # 2. Calcular variación diaria
-        daily_returns = (N - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z
+        caminos_precios = np.zeros((simulaciones, dias + 1))
+        caminos_precios[:, 0] = precio_inicial
         
-        # 3. Calcular caminos de precios
-        price_paths = np.zeros((M, T + 1))
-        price_paths[:, 0] = S0
-        
-        for t in range(1, T + 1):
-            price_paths[:, t] = price_paths[:, t - 1] * np.exp(daily_returns[:, t - 1])
+        for t in range(1, dias + 1):
+            caminos_precios[:, t] = caminos_precios[:, t - 1] * np.exp(rendimientos_diarios[:, t - 1])
             
-        return price_paths
+        return caminos_precios
     
-    def simulate_risk(self, request_data):
-        # Extraer parámetros
-        S0 = request_data.get('current_price', 100.0)
-        sigma = request_data.get('volatility', 0.20)
-        T = request_data.get('time_steps', 252)
-        N_sims = request_data.get('num_simulations', 1000)
-        r = request_data.get('risk_free_rate', 0.05)
+    def simular_riesgo(self, datos):
+        precio = datos.get('current_price', 100.0)
+        volatilidad = datos.get('volatility', 0.20)
+        dias = datos.get('time_steps', 252)
+        simulaciones = datos.get('num_simulations', 1000)
+        tasa = datos.get('risk_free_rate', 0.05)
         
-        # Validar parámetros
-        if T <= 0:
-            T = 252  # Default: 1 año de días hábiles
-        if N_sims <= 0:
-            N_sims = 1000
-        if sigma <= 0:
-            sigma = 0.20
+        if dias <= 0:
+            dias = 252
+        if simulaciones <= 0:
+            simulaciones = 1000
         
+        caminos = self.montecarlo(precio, volatilidad, dias, simulaciones, tasa)
         
-        price_paths_array = self.montecarlo(S0, sigma, T, N_sims, r)
+        caminos_transpuestos = caminos.T
         
-        transposed_paths = price_paths_array.T
+        promedio = np.mean(caminos_transpuestos, axis=1)
+        percentil_5 = np.percentile(caminos_transpuestos, 5, axis=1)
+        percentil_95 = np.percentile(caminos_transpuestos, 95, axis=1)
         
-        average_path = np.mean(transposed_paths, axis=1)
-        percentile_5 = np.percentile(transposed_paths, 5, axis=1)
-        percentile_95 = np.percentile(transposed_paths, 95, axis=1)
+        precios_finales = caminos[:, -1]
+        precio_percentil_5 = np.percentile(precios_finales, 5)
+        var_95 = precio - precio_percentil_5
         
-        # 3. Calcular VaR al 95%
-        final_day_prices = price_paths_array[:, -1]
-        price_at_5th_percentile = np.percentile(final_day_prices, 5)
-        VaR_95 = S0 - price_at_5th_percentile
-        
-        # 4. Preparar respuesta
         return {
-            "simulations": price_paths_array.tolist(),
-            "average_path": average_path.tolist(),
-            "var_95": float(VaR_95),
-            "percentile_5": percentile_5.tolist(),
-            "percentile_95": percentile_95.tolist(),
-            "time_steps": T,
-            "num_simulations": N_sims,
-            "price_at_5th_percentile": float(price_at_5th_percentile)
+            "simulations": caminos.tolist(),
+            "average_path": promedio.tolist(),
+            "var_95": float(var_95),
+            "percentile_5": percentil_5.tolist(),
+            "percentile_95": percentil_95.tolist(),
+            "time_steps": dias,
+            "num_simulations": simulaciones
         }
