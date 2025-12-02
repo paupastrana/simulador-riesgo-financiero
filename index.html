@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Monte Carlo</title>
+    <link rel="stylesheet" href="principal.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+    <header>
+        <h1>Simulador de Precios</h1>
+        <p>Modelo Monte Carlo para proyección financiera</p>
+    </header>
+
+    <div class="contenedor">
+        <div class="panel-entrada">
+            <h2>Configuración</h2>
+            
+            <div class="grupo-form">
+                <label for="precioActual">Precio Actual:</label>
+                <input type="number" id="precioActual" value="100" min="1" step="0.01">
+            </div>
+            
+            <div class="grupo-form">
+                <label for="volatilidad">Volatilidad (%):</label>
+                <input type="number" id="volatilidad" value="20" min="1" max="100" step="0.1">
+            </div>
+            
+            <div class="grupo-form">
+                <label for="dias">Días a simular:</label>
+                <input type="number" id="dias" value="252" min="10" max="1000">
+            </div>
+            
+            <div class="grupo-form">
+                <label for="simulaciones">Número de simulaciones:</label>
+                <input type="number" id="simulaciones" value="500" min="10" max="2000">
+            </div>
+            
+            <div class="grupo-form">
+                <label for="tasa">Tasa libre de riesgo (%):</label>
+                <input type="number" id="tasa" value="5" min="0" max="20" step="0.1">
+            </div>
+            
+            <button id="botonSimular" onclick="ejecutarSimulacion()">
+                <span id="textoBoton">Simular</span>
+                <span id="cargando" style="display:none;">Calculando...</span>
+            </button>
+            
+            <button onclick="reiniciar()">Reiniciar</button>
+            
+            <div id="mensajeError" style="display:none; color:red; margin-top:10px;"></div>
+        </div>
+
+        <div class="panel-resultados">
+            <div class="tarjetas">
+                <div class="tarjeta">
+                    <h3>Value at Risk (95%)</h3>
+                    <p id="valorVar">--</p>
+                    <p class="descripcion">Pérdida máxima esperada</p>
+                </div>
+                
+                <div class="tarjeta">
+                    <h3>Precio Final Esperado</h3>
+                    <p id="precioFinal">--</p>
+                    <p class="descripcion">Precio promedio final</p>
+                </div>
+                
+                <div class="tarjeta">
+                    <h3>Volatilidad Proyectada</h3>
+                    <p id="volProyectada">--</p>
+                    <p class="descripcion">Volatilidad anualizada</p>
+                </div>
+            </div>
+
+            <div class="contenedor-grafico">
+                <h3>Proyecciones de Precio</h3>
+                <div style="margin-bottom:10px;">
+                    <label>
+                        <input type="checkbox" id="mostrarTrayectorias" checked> Mostrar trayectorias
+                    </label>
+                </div>
+                <canvas id="graficoPrecios"></canvas>
+            </div>
+            
+            <div class="tabla">
+                <h3>Resumen Estadístico</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Estadística</th>
+                            <th>Valor</th>
+                            <th>Descripción</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>VaR 95%</td>
+                            <td id="tablaVar">--</td>
+                            <td>Pérdida máxima con 95% confianza</td>
+                        </tr>
+                        <tr>
+                            <td>Precio Mínimo</td>
+                            <td id="tablaMin">--</td>
+                            <td>Precio más bajo proyectado</td>
+                        </tr>
+                        <tr>
+                            <td>Precio Máximo</td>
+                            <td id="tablaMax">--</td>
+                            <td>Precio más alto proyectado</td>
+                        </tr>
+                        <tr>
+                            <td>Probabilidad de Pérdida</td>
+                            <td id="tablaProb">--</td>
+                            <td>% de simulaciones con pérdida</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const URL_API = "/api/simulate";
+        let grafico = null;
+        let datosActuales = null;
+
+        async function ejecutarSimulacion() {
+            const boton = document.getElementById('botonSimular');
+            const texto = document.getElementById('textoBoton');
+            const cargando = document.getElementById('cargando');
+            const error = document.getElementById('mensajeError');
+            
+            error.style.display = 'none';
+            error.textContent = '';
+            
+            boton.disabled = true;
+            texto.style.display = 'none';
+            cargando.style.display = 'inline-block';
+            
+            const precio = parseFloat(document.getElementById('precioActual').value);
+            const volPorcentaje = parseFloat(document.getElementById('volatilidad').value);
+            const dias = parseInt(document.getElementById('dias').value);
+            const simulaciones = parseInt(document.getElementById('simulaciones').value);
+            const tasaPorcentaje = parseFloat(document.getElementById('tasa').value);
+            
+            if (simulaciones > 2000) {
+                mostrarError("Usa máximo 2000 simulaciones para mejor rendimiento.");
+                finalizarCarga(boton, texto, cargando);
+                return;
+            }
+            
+            if (dias > 1000) {
+                mostrarError("Máximo 1000 días.");
+                finalizarCarga(boton, texto, cargando);
+                return;
+            }
+            
+            const datos = {
+                current_price: precio,
+                volatility: volPorcentaje / 100,
+                time_steps: dias,
+                num_simulations: simulaciones,
+                risk_free_rate: tasaPorcentaje / 100
+            };
+
+            try {
+                const respuesta = await fetch(URL_API, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(datos)
+                });
+                
+                if (!respuesta.ok) {
+                    throw new Error(`Error ${respuesta.status}`);
+                }
+
+                const resultado = await respuesta.json();
+                
+                if (resultado.error) {
+                    throw new Error(resultado.error);
+                }
+                
+                datosActuales = resultado;
+                actualizarEstadisticas(resultado);
+                dibujarGrafico(resultado);
+                actualizarTabla(resultado);
+                
+            } catch (err) {
+                console.error("Error:", err);
+                let mensaje = "Error en la simulación: ";
+                if (err.message.includes("Failed to fetch")) {
+                    mensaje += "No se pudo conectar con el servidor.";
+                } else {
+                    mensaje += err.message;
+                }
+                mostrarError(mensaje);
+                
+            } finally {
+                finalizarCarga(boton, texto, cargando);
+            }
+        }
+        
+        function mostrarError(mensaje) {
+            const error = document.getElementById('mensajeError');
+            error.textContent = mensaje;
+            error.style.display = 'block';
+        }
+        
+        function finalizarCarga(boton, texto, cargando) {
+            boton.disabled = false;
+            texto.style.display = 'inline-block';
+            cargando.style.display = 'none';
+        }
+        
+        function actualizarEstadisticas(datos) {
+            document.getElementById('valorVar').textContent = `-$${datos.var_95.toFixed(2)}`;
+            document.getElementById('tablaVar').textContent = `-$${datos.var_95.toFixed(2)}`;
+            
+            const precioFinal = datos.average_path[datos.average_path.length - 1];
+            document.getElementById('precioFinal').textContent = `$${precioFinal.toFixed(2)}`;
+            
+            const preciosFinales = datos.simulations.map(camino => camino[camino.length - 1]);
+            const rendimientos = preciosFinales.map(p => Math.log(p / datos.current_price));
+            const sumaCuadrados = rendimientos.reduce((total, r) => total + r*r, 0);
+            const volatilidad = Math.sqrt(252) * Math.sqrt(sumaCuadrados / rendimientos.length);
+            document.getElementById('volProyectada').textContent = `${(volatilidad * 100).toFixed(1)}%`;
+            
+            const minimo = Math.min(...preciosFinales);
+            const maximo = Math.max(...preciosFinales);
+            const perdidas = preciosFinales.filter(p => p < datos.current_price).length;
+            const probabilidad = (perdidas / preciosFinales.length * 100);
+            
+            document.getElementById('tablaMin').textContent = `$${minimo.toFixed(2)}`;
+            document.getElementById('tablaMax').textContent = `$${maximo.toFixed(2)}`;
+            document.getElementById('tablaProb').textContent = `${probabilidad.toFixed(1)}%`;
+        }
+        
+        function dibujarGrafico(datos) {
+            const ctx = document.getElementById('graficoPrecios').getContext('2d');
+            
+            if (grafico) {
+                grafico.destroy();
+            }
+            
+            const mostrarTodas = document.getElementById('mostrarTrayectorias').checked;
+            const maximoAMostrar = 50;
+            const trayectoriasAMostrar = mostrarTodas ? 
+                Math.min(datos.simulations.length, maximoAMostrar) : 
+                0;
+            
+            const datasetsTrayectorias = [];
+            for (let i = 0; i < trayectoriasAMostrar; i++) {
+                datasetsTrayectorias.push({
+                    data: datos.simulations[i],
+                    borderColor: 'rgba(150, 150, 150, 0.1)',
+                    borderWidth: 0.5,
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0,
+                });
+            }
+            
+            const datasetsEstadisticas = [
+                {
+                    label: 'Promedio',
+                    data: datos.average_path,
+                    borderColor: 'rgba(33, 150, 243, 1)',
+                    borderWidth: 3,
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0,
+                },
+                {
+                    label: 'Percentil 5%',
+                    data: datos.percentile_5,
+                    borderColor: 'rgba(244, 67, 54, 0.8)',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0,
+                },
+                {
+                    label: 'Percentil 95%',
+                    data: datos.percentile_95,
+                    borderColor: 'rgba(76, 175, 80, 0.8)',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0,
+                }
+            ];
+            
+            grafico = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({ length: datos.time_steps + 1 }, (_, i) => i),
+                    datasets: [...datasetsTrayectorias, ...datasetsEstadisticas]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                filter: (item) => {
+                                    return item.text.includes('Promedio') || 
+                                           item.text.includes('Percentil') ||
+                                           trayectoriasAMostrar <= 10;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Días'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Precio ($)'
+                            },
+                            beginAtZero: false
+                        }
+                    }
+                }
+            });
+        }
+        
+        function actualizarTabla(datos) {
+        }
+        
+        function reiniciar() {
+            document.getElementById('precioActual').value = 100;
+            document.getElementById('volatilidad').value = 20;
+            document.getElementById('dias').value = 252;
+            document.getElementById('simulaciones').value = 500;
+            document.getElementById('tasa').value = 5;
+            
+            if (grafico) {
+                grafico.destroy();
+                grafico = null;
+            }
+            
+            document.getElementById('valorVar').textContent = '--';
+            document.getElementById('precioFinal').textContent = '--';
+            document.getElementById('volProyectada').textContent = '--';
+            
+            ['tablaVar', 'tablaMin', 'tablaMax', 'tablaProb'].forEach(id => {
+                document.getElementById(id).textContent = '--';
+            });
+            
+            document.getElementById('mensajeError').style.display = 'none';
+        }
+    </script>
+
+</body>
+</html>
