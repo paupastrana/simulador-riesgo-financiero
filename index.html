@@ -257,16 +257,16 @@
             const datasetsTrayectorias = [];
             for (let i = 0; i < trayectoriasAMostrar; i++) {
                 datasetsTrayectorias.push({
+                    
                     data: datos.simulations[i],
-                    borderColor: 'rgba(150, 150, 150, 0.15)',
-                    borderWidth: 0.7,
+                    borderColor: 'rgba(150, 150, 150, 0.1)',
+                    borderWidth: 0.5,
                     fill: false,
                     pointRadius: 0,
                     tension: 0,
-                    isPath: true
                 });
             }
-
+            
             const datasetsEstadisticas = [
                 {
                     label: 'Promedio',
@@ -275,7 +275,7 @@
                     borderWidth: 3,
                     fill: false,
                     pointRadius: 0,
-                    tension: 0
+                    tension: 0,
                 },
                 {
                     label: 'Percentil 5%',
@@ -285,7 +285,7 @@
                     borderDash: [5, 5],
                     fill: false,
                     pointRadius: 0,
-                    tension: 0
+                    tension: 0,
                 },
                 {
                     label: 'Percentil 95%',
@@ -295,7 +295,7 @@
                     borderDash: [5, 5],
                     fill: false,
                     pointRadius: 0,
-                    tension: 0
+                    tension: 0,
                 }
             ];
             
@@ -311,13 +311,7 @@
                     plugins: {
                         legend: {
                             position: 'top',
-                            labels: {
-                             
-                                filter: (item, chart) => {
-                                    const ds = legend.chart.data.datasets[item.datasetIndex];
-                                    return !ds.isPath;
-                                }
-                            }
+                            
                         }
                     },
                     scales: {
@@ -338,7 +332,6 @@
                 }
             });
         }
-
         
         function actualizarTabla(datos) {
         }
